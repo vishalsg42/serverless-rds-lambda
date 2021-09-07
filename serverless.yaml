@@ -1,0 +1,76 @@
+provider:
+  name: aws
+  profile: ${opt:profile} # change the aws profile 
+  region: "ap-south-1"
+service: lambda-with-rds-${sls:stage}
+custom: ${file(./credentials.yaml)}
+disabledDeprecations:
+  - "*"
+functions:
+  AnalyticsLambda:
+    runtime: nodejs14.x
+    handler: index.handler
+    description: analytics function
+    name: post-analytics-${sls:stage}
+    timeout: 30
+    memorySize: 512
+    environment:
+      PG_HOST: ${self:resources.Outputs.DBHOST.Value}
+        # Fn::GetAtt:
+        #  -  
+      # PG_HOST: ${cf:lambda-with-rds-dev-dev:DBHOST}
+        # ${cf.lambda-with-rds.DBHOST}
+        # 'Fn::ImportValue': 'DBHOST'
+      PG_USER: ${self:custom.PG_USER}
+      PG_DATABASE: ${self:custom.PG_DATABASE_NAME}
+      PG_PASSWORD: ${self:custom.PG_PASSWORD}
+      PG_PORT: ${self:custom.PG_PORT}
+
+resources:
+  Resources:
+    PGAnalyticsSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupName: analytics-database-security-group-${sls:stage}
+        GroupDescription: analytics database group
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            CidrIp: 0.0.0.0/0 # this ip allows the database to configure publicly
+            Description: Allow everyone to access database
+        Tags:
+          - Key: Name
+            Value: analytics-database-security-group
+    PGAnalyticsDatabase:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        AllocatedStorage: "20"
+        DBInstanceClass: db.t3.micro
+        DBInstanceIdentifier: analytics-db-${sls:stage}
+        AllowMajorVersionUpgrade: true
+        AutoMinorVersionUpgrade: true
+        Engine: postgres
+        EngineVersion: "13.3" # this might differ from region to region
+        DBName: ${self:custom.PG_DATABASE_NAME}
+        MasterUsername: ${self:custom.PG_USER} #always resolve it from secret manager
+        MasterUserPassword: ${self:custom.PG_PASSWORD} #always resolve it from secret manager
+        MultiAZ: false
+        Port: ${self:custom.PG_PORT} #deault
+        PubliclyAccessible: true
+        StorageEncrypted: false
+        StorageType: gp2
+        VPCSecurityGroups:
+          - !GetAtt PGAnalyticsSecurityGroup.GroupId
+        Tags:
+          - Key: Name
+            Value: "lambda analytics"
+  Outputs:
+    DBHOST:
+      Value: !GetAtt PGAnalyticsDatabase.Endpoint.Address
+      Export:
+        Name: ${self:service}:${sls:stage}:DBHOST
+  #   DBPORT:
+  #     Value: !GetAtt PGAnalyticsDatabase.Endpoint.Port
+  #     Export:
+  #       Name: DBPORT
